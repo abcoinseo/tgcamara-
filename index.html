@@ -3,182 +3,262 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Motion Detector & Telegram Uploader</title>
+    <title>AI-Powered Security Camera (Gemini)</title>
     <style>
-        body {
-            font-family: sans-serif;
-            background-color: #222;
-            color: #eee;
-            text-align: center;
-        }
-        #videoElement {
-            max-width: 100%; /* Responsive video */
-            border: 3px solid #4CAF50; /* Green border initially */
-            display: block;  /* Remove extra space below inline element */
-            margin: 0 auto; /* Center the video */
-        }
-        #canvasElement {
-            display: none; /* Hidden canvas */
-        }
-        #status {
-            margin-top: 10px;
-            font-weight: bold;
-        }
-        .motion-detected {
-            border-color: red !important; /* Red border on motion */
-        }
+        body { font-family: sans-serif; background-color: #222; color: #eee; text-align: center; margin: 0; padding: 0; }
+        #container { position: relative; width: 100%; max-width: 640px; /* Or any desired max width */ margin: 0 auto; }
+        #videoElement { width: 100%; display: block; border: 3px solid #4CAF50; }
+        #overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; /* Important: Allows clicks to pass through */ }
+        #status { margin-top: 10px; font-weight: bold; }
+        .bounding-box { position: absolute; border: 2px solid yellow; box-sizing: border-box; }
+        .label { position: absolute; top: -20px; left: 0; background-color: rgba(255, 255, 0, 0.7); color: black; padding: 2px 5px; font-size: 12px; }
     </style>
 </head>
 <body>
-    <h1>Pro Motion Detector</h1>
-    <video id="videoElement" autoplay muted playsinline></video>
-    <canvas id="canvasElement"></canvas>
+    <h1>AI Security Camera</h1>
+    <div id="container">
+        <video id="videoElement" autoplay muted playsinline></video>
+        <canvas id="overlayCanvas"></canvas>
+    </div>
     <div id="status">Starting...</div>
 
     <script>
-        const TELEGRAM_BOT_TOKEN = '7785386019:AAHN8h2fje-njjcvAUUftx6TjJFE7rB4lvk';
-        const CHAT_ID = '8101021767';
+        const TELEGRAM_BOT_TOKEN = '7785386019:AAHN8h2fje-njjcvAUUftx6TjJFE7rB4lvk'; //REPLACE WITH YOURS
+        const CHAT_ID = '8101021767'; //REPLACE WITH YOURS
+        const GEMINI_API_KEY = 'AIzaSyCuidd3GOSAck24jDAgFpdqZBnINsFA79k'; // Your Gemini API key
+        const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key=' + GEMINI_API_KEY;
+
         const video = document.getElementById('videoElement');
-        const canvas = document.getElementById('canvasElement');
-        const context = canvas.getContext('2d');
+        const overlayCanvas = document.getElementById('overlayCanvas');
+        const overlayCtx = overlayCanvas.getContext('2d');
         const statusDiv = document.getElementById('status');
+        const cooldownPeriod = 5000; // 5 seconds between captures
+        let lastCaptureTime = 0;
+        let isProcessing = false; // Flag to prevent concurrent Gemini API calls
 
-        let previousFrame = null;
-        let motionDetectionActive = true; // Flag to control motion detection
-        const motionThreshold = 20;  // Adjust sensitivity (lower = more sensitive)
-        const captureDelay = 1000;   // Delay in milliseconds after motion detection
-        let lastCaptureTime = 0; // Timestamp of the last capture
-        const cooldownPeriod = 5000; // Minimum time between captures (5 seconds)
-
-        // Error handling
+        // Error handling function (reused from previous examples)
         function handleError(message, error) {
             console.error(message, error);
             statusDiv.textContent = `Error: ${message}`;
             statusDiv.style.color = 'red';
+            // Consider stopping further processing on critical errors
+            // isProcessing = true; // Prevent further frames if API consistently fails
         }
 
 
-        // Get user media (camera)
+        // Start the camera (front-facing)
         async function startCamera() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false }); // Prefer back camera, no audio
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "user" }, // Use front-facing camera
+                    audio: false
+                });
                 video.srcObject = stream;
                 video.onloadedmetadata = () => {
-                    // Set canvas size to match video size.
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    statusDiv.textContent = "Camera ready. Detecting motion...";
-                    detectMotion(); // Start motion detection after camera is ready
+                    overlayCanvas.width = video.videoWidth;
+                    overlayCanvas.height = video.videoHeight;
+                    statusDiv.textContent = "Camera ready.  Waiting for AI...";
+                    requestAnimationFrame(processFrame); // Start the processing loop
+                };
+            } catch (err) {
+               handleError("Could not access the camera", err)
+            }
+        }
+
+
+
+        // Call Gemini API (REAL IMPLEMENTATION)
+        async function callGeminiAPI(imageData) {
+            try {
+                const base64ImageData = imageDataToBytes(imageData);
+
+                const requestBody = {
+                    contents: [{
+                        parts: [
+                            { text: "Detect objects in this image and provide bounding boxes.  Give results in this format:\n* **Object Name**: Confidence: 0.9, Bounding box: (0.1, 0.2, 0.3, 0.4)" },
+                            { inline_data: { mime_type: "image/jpeg", data: base64ImageData } }
+                        ]
+                    }]
                 };
 
+                const response = await fetch(GEMINI_API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody),
+                });
+
+                if (!response.ok) {
+                    // Handle HTTP errors (e.g., 400, 500)
+                    throw new Error(`Gemini API error: ${response.status} - ${await response.text()}`);
+                }
+
+                const data = await response.json();
+
+                const detections = parseGeminiResponse(data.candidates[0]?.content?.parts[0]?.text);
+                return detections;
+
             } catch (error) {
-                handleError("Could not access the camera.", error)
+                handleError("Error calling Gemini API:", error);
+                return []; // Return empty array on error
             }
         }
 
-        // Convert image data to grayscale
-        function grayscale(imageData) {
-            const data = imageData.data;
-            for (let i = 0; i < data.length; i += 4) {
-                const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-                data[i] = avg;     // Red
-                data[i + 1] = avg; // Green
-                data[i + 2] = avg; // Blue
+        // Helper function to convert ImageData to base64
+        function imageDataToBytes(imageData) {
+           const canvas = document.createElement('canvas');
+           const ctx = canvas.getContext('2d');
+           canvas.width = imageData.width;
+           canvas.height = imageData.height;
+           ctx.putImageData(imageData, 0, 0);
+
+            // Get the data URL, then convert it to Base64
+            const dataURL = canvas.toDataURL('image/jpeg', 0.8); // Use JPEG with 80% quality
+            return dataURL.split(',')[1]; // Remove the "data:image/jpeg;base64," prefix
+        }
+
+        // Helper function to parse Gemini API response text (SAME AS BEFORE, BUT NOW USED FOR REAL)
+        function parseGeminiResponse(responseText) {
+            const detections = [];
+             if (!responseText) {
+                 return detections; // Return empty array if no response text
+             }
+
+            const lines = responseText.split('\n'); // Split into lines
+
+            for (const line of lines) {
+                if (line.startsWith("*")) { // Look for lines starting with "*"
+                    const match = line.match(/\*\s*\*\*([^*]+)\*\*:\s*Confidence:\s*([\d.]+),\s*Bounding box:\s*\(([\d\.]+),\s*([\d\.]+),\s*([\d\.]+),\s*([\d\.]+)\)/);
+                    if (match) {
+                        const [, label, confidence, x1, y1, x2, y2] = match;  //Destructure
+                        detections.push({
+                            label: label.trim(),
+                            confidence: parseFloat(confidence),
+                            bbox: {
+                                x1: parseFloat(x1),
+                                y1: parseFloat(y1),
+                                x2: parseFloat(x2),
+                                y2: parseFloat(y2)
+                            }
+                        });
+                    }
+                }
             }
-            return imageData;
+            return detections;
         }
 
 
-        // Detect motion between frames
-        function detectMotion() {
-            if (!motionDetectionActive) {
-                requestAnimationFrame(detectMotion); // Keep looping even if paused
+
+
+        // Draw bounding boxes and labels on the canvas (SAME AS BEFORE)
+       function drawDetections(detections) {
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height); // Clear previous drawings
+
+            for (const detection of detections) {
+                const { x1, y1, x2, y2 } = detection.bbox;
+
+                // Convert normalized coordinates to pixel coordinates
+                const x = x1 * overlayCanvas.width;
+                const y = y1 * overlayCanvas.height;
+                const width = (x2 - x1) * overlayCanvas.width;
+                const height = (y2 - y1) * overlayCanvas.height;
+
+                // Draw the bounding box
+                overlayCtx.strokeStyle = 'yellow';
+                overlayCtx.lineWidth = 2;
+                overlayCtx.strokeRect(x, y, width, height);
+
+                // Draw the label
+                overlayCtx.fillStyle = 'rgba(255, 255, 0, 0.7)';
+                overlayCtx.fillRect(x, y - 20, width, 20); // Background for label
+                overlayCtx.fillStyle = 'black';
+                overlayCtx.font = '12px sans-serif';
+                overlayCtx.fillText(`${detection.label} (${(detection.confidence * 100).toFixed(1)}%)`, x + 5, y - 5);
+
+                 //Draw "shadow" dots
+                overlayCtx.fillStyle = "rgba(0, 0, 0, 0.3)"; // Semi-transparent black
+                 const dotSize = 2;
+                 for (let i = x; i < x+ width; i += dotSize *2)
+                 {
+                    for (let j = y; j < y + height; j += dotSize * 2)
+                    {
+                        overlayCtx.fillRect(i,j,dotSize,dotSize)
+                    }
+                 }
+            }
+        }
+
+
+
+      // Process each video frame (SAME AS BEFORE, but using the real API call)
+        async function processFrame() {
+            if (isProcessing) {  // Skip if already processing
+                requestAnimationFrame(processFrame);
                 return;
             }
+            isProcessing = true;
 
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const currentFrame = grayscale(context.getImageData(0, 0, canvas.width, canvas.height));
+            overlayCtx.drawImage(video, 0, 0, overlayCanvas.width, overlayCanvas.height);  // Draw to hidden canvas
+            const imageData = overlayCtx.getImageData(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-            if (previousFrame) {
-                const diff = context.createImageData(canvas.width, canvas.height);
-                let motionDetected = false;
+            // Call Gemini API (replace mock function with your actual implementation)
+            const detections = await callGeminiAPI(imageData);
 
-                for (let i = 0; i < currentFrame.data.length; i += 4) {
-                    const total = Math.abs(currentFrame.data[i] - previousFrame.data[i]); // Compare only red channel (grayscale)
-                    if (total > motionThreshold) {
-                        diff.data[i] = 255; // Red for motion
-                        diff.data[i + 3] = 255; // Alpha
-                        motionDetected = true;
-                    } else {
-                        diff.data[i + 3] = 0; // Transparent
-                    }
+            drawDetections(detections); // Draw boxes *before* checking for humans
+
+              // Check if a human was detected with high confidence
+            const humanDetected = detections.some(d => d.label.toLowerCase() === 'human' && d.confidence > 0.8);
+            if (humanDetected) {
+                const currentTime = Date.now();
+                if (currentTime - lastCaptureTime > cooldownPeriod) {
+                     statusDiv.textContent = "Human detected! Capturing...";
+                    captureAndSendImage(); // Capture and send only if human detected
+                    lastCaptureTime = currentTime;
                 }
-
-                if (motionDetected) {
-                  video.classList.add('motion-detected');  // Add red border
-
-                   const currentTime = Date.now();
-                    if (currentTime - lastCaptureTime > cooldownPeriod) { // Check cooldown
-                        statusDiv.textContent = "Motion detected! Capturing...";
-                        captureAndSendImage();
-                        lastCaptureTime = currentTime;
-                    }
-                } else {
-                   video.classList.remove('motion-detected'); // Remove red border
-                }
+            } else {
+                statusDiv.textContent = 'Waiting for human...';
             }
-
-            previousFrame = currentFrame; // Store current frame for next comparison
-            requestAnimationFrame(detectMotion); // Continue the loop
+            isProcessing = false; //Allow next run
+            requestAnimationFrame(processFrame);
         }
 
 
-        // Capture image from canvas and send to Telegram
+
+        // Capture the image from the canvas and send it to Telegram (SAME AS BEFORE)
         async function captureAndSendImage() {
-            canvas.toBlob(async (blob) => {
+            overlayCanvas.toBlob(async (blob) => { // Use overlayCanvas, where bounding boxes are drawn
                 if (!blob) {
-                    handleError("Failed to create image blob.", null);
+                    handleError("Failed to create image blob.", null)
                     return;
                 }
 
                 const formData = new FormData();
                 formData.append('chat_id', CHAT_ID);
-                formData.append('photo', blob, 'motion_capture.png');
+                formData.append('photo', blob, 'security_capture.png');
 
                 try {
                     const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
                         method: 'POST',
                         body: formData,
                     });
-
                     const data = await response.json();
                     if (data.ok) {
                         statusDiv.textContent = `Image sent successfully at ${new Date().toLocaleTimeString()}`;
                         statusDiv.style.color = 'green';
                     } else {
-                        handleError("Telegram API Error:", data);
+                       handleError("Telegram API Error", data)
                     }
                 } catch (error) {
-                    handleError("Failed to send image:", error);
+                    handleError("Failed to send image.", error);
                 }
-            }, 'image/png'); // Ensure PNG format
+            }, 'image/png');
         }
 
 
-        // Toggle motion detection (for demonstration purposes)
-        function toggleMotionDetection() {
-            motionDetectionActive = !motionDetectionActive;
-            statusDiv.textContent = motionDetectionActive ? "Motion detection active" : "Motion detection paused";
-        }
+        // Initialize everything
+        startCamera();
 
-      // Start the camera and motion detection
-      startCamera();
-
-      // Add a button to toggle (optional, but good for testing)
-      const toggleButton = document.createElement('button');
-      toggleButton.textContent = 'Toggle Motion Detection';
-      toggleButton.onclick = toggleMotionDetection;
-      document.body.appendChild(toggleButton);
 
     </script>
 </body>
