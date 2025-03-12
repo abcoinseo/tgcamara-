@@ -3,21 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Motion Detector (Telegram Only)</title>
+    <title>Pro Motion Detector (Telegram, Multi-ROI)</title>
     <style>
         body { font-family: sans-serif; background-color: #222; color: #eee; text-align: center; margin: 0; padding: 0; }
-        #container { position: relative; width: 100%; max-width: 800px; margin: 0 auto; } /* Adjust max-width as needed */
+        #container { position: relative; width: 100%; max-width: 800px; margin: 0 auto; }
         #videoElement { width: 100%; display: block; border: 3px solid #4CAF50; }
-        #diffCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: none; /* Hidden by default */ }
+        #diffCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: none; /* Hidden */ }
         #status { margin-top: 10px; font-weight: bold; }
         .motion-detected { border-color: red; }
     </style>
 </head>
 <body>
-    <h1>Pro Motion Detector</h1>
+    <h1>Pro Motion Detector (Multi-ROI)</h1>
     <div id="container">
         <video id="videoElement" autoplay muted playsinline></video>
-        <canvas id="diffCanvas"></canvas>  {/* Canvas for visualizing the differences */}
+        <canvas id="diffCanvas"></canvas>
     </div>
     <div id="status">Starting...</div>
 
@@ -30,13 +30,20 @@
         const statusDiv = document.getElementById('status');
 
         let previousFrame = null;
-        const motionThreshold = 25; // Adjust sensitivity (lower = more sensitive)
-        const cooldownPeriod = 2000; // 2 seconds between captures
+        const motionThreshold = 25;
+        const cooldownPeriod = 2000;
         let lastCaptureTime = 0;
         let isProcessing = false;
 
-         // For visualizing differences (optional)
-        const showDiff = false; // Set to true to see the difference canvas
+        // Define multiple Regions of Interest (ROIs)
+        const rois = [
+            { x1: 0.1, y1: 0.1, x2: 0.4, y2: 0.4, color: 'red' },   // Top-left
+            { x1: 0.6, y1: 0.1, x2: 0.9, y2: 0.4, color: 'green' }, // Top-right
+            { x1: 0.3, y1: 0.6, x2: 0.7, y2: 0.9, color: 'blue' }   // Bottom-center
+        ];
+
+        // For visualizing the ROIs (optional)
+        const showROIs = true; // Set to true to see the ROI outlines
 
         function handleError(message, error) {
             console.error(message, error);
@@ -47,14 +54,13 @@
         async function startCamera() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+                    video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, // Front camera
                     audio: false
                 });
                 video.srcObject = stream;
                 video.onloadedmetadata = () => {
                     diffCanvas.width = video.videoWidth;
                     diffCanvas.height = video.videoHeight;
-                    diffCanvas.style.display = showDiff ? 'block' : 'none'; // Show/hide diff canvas
                     statusDiv.textContent = "Camera ready. Detecting motion...";
                     requestAnimationFrame(processFrame);
                 };
@@ -74,88 +80,80 @@
             return imageData;
         }
 
-         // Improved motion detection with region of interest (ROI)
-        function detectMotion(currentFrame, previousFrame) {
-              if (!previousFrame) {
-                return false; // No motion if no previous frame
-              }
+      function detectMotionInROIs(currentFrame, previousFrame) {
+        if (!previousFrame) {
+            return false;
+        }
 
-            let motionDetected = false;
-            const diff = diffCtx.createImageData(diffCanvas.width, diffCanvas.height);
-            const diffData = diff.data;
+        let motionDetected = false;
+        diffCtx.clearRect(0, 0, diffCanvas.width, diffCanvas.height); // Clear for ROI drawing
 
-             // Define a region of interest (ROI) - Example: Central 50% of the frame
-            const roiX1 = Math.floor(diffCanvas.width * 0.25);
-            const roiY1 = Math.floor(diffCanvas.height * 0.25);
-            const roiX2 = Math.floor(diffCanvas.width * 0.75);
-            const roiY2 = Math.floor(diffCanvas.height * 0.75);
-              let motionPixels = 0;
+        for (const roi of rois) {
+            const roiX1 = Math.floor(diffCanvas.width * roi.x1);
+            const roiY1 = Math.floor(diffCanvas.height * roi.y1);
+            const roiX2 = Math.floor(diffCanvas.width * roi.x2);
+            const roiY2 = Math.floor(diffCanvas.height * roi.y2);
+
+            let motionPixels = 0;
             const totalPixels = (roiX2 - roiX1) * (roiY2 - roiY1);
 
-
-              for (let y = roiY1; y < roiY2; y++) {
+            for (let y = roiY1; y < roiY2; y++) {
                 for (let x = roiX1; x < roiX2; x++) {
                     const index = (y * diffCanvas.width + x) * 4;
-
                     const totalDifference = Math.abs(currentFrame.data[index] - previousFrame.data[index]);
 
                     if (totalDifference > motionThreshold) {
-                        diffData[index] = 255; // Red for motion
-                        diffData[index + 1] = 0;
-                        diffData[index + 2] = 0;
-                        diffData[index + 3] = 255; // Alpha
-                         motionPixels++;
-                        motionDetected = true;
-                    } else {
-                        diffData[index] = 0;      // Black for no motion
-                        diffData[index + 1] = 0;
-                        diffData[index + 2] = 0;
-                        diffData[index + 3] = 255; // Fully opaque
+                        motionPixels++;
+                        motionDetected = true; // Set to true if motion in *any* ROI
                     }
                 }
             }
 
-            if (showDiff) {
-                diffCtx.putImageData(diff, 0, 0); // Display the difference image
+             const motionPercentage = (motionPixels / totalPixels) * 100;
+
+            // Draw ROI outlines (if enabled)
+            if (showROIs) {
+                 diffCtx.strokeStyle = roi.color;
+                diffCtx.lineWidth = 2;
+                diffCtx.strokeRect(roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1);
             }
-            const motionPercentage = (motionPixels / totalPixels) * 100
-              return motionPercentage > 5; // Consider it motion if more than 5% of pixels changed
+             if (motionPercentage > 5) return true // if detect return 
         }
 
+        return motionDetected; // Return the overall motion detection result
+    }
 
-
-       async function processFrame() {
-          if (isProcessing) {
-                requestAnimationFrame(processFrame);
-                return;
-            }
-            isProcessing = true;
-            diffCtx.drawImage(video, 0, 0, diffCanvas.width, diffCanvas.height); // Draw to canvas
-            const currentFrame = grayscale(diffCtx.getImageData(0, 0, diffCanvas.width, diffCanvas.height));
-
-            if (detectMotion(currentFrame, previousFrame)) {
-              video.classList.add("motion-detected");
-                const currentTime = Date.now();
-                if (currentTime - lastCaptureTime > cooldownPeriod) {
-                    statusDiv.textContent = "Motion detected! Capturing...";
-                    captureAndSendImage();
-                    lastCaptureTime = currentTime;
-                }
-            }
-            else
-            {
-                video.classList.remove("motion-detected")
-            }
-
-            previousFrame = currentFrame;
-            isProcessing = false;
+      async function processFrame() {
+        if (isProcessing) {
             requestAnimationFrame(processFrame);
+            return;
+        }
+        isProcessing = true;
+
+        diffCtx.drawImage(video, 0, 0, diffCanvas.width, diffCanvas.height);
+        const currentFrame = grayscale(diffCtx.getImageData(0, 0, diffCanvas.width, diffCanvas.height));
+
+        if (detectMotionInROIs(currentFrame, previousFrame)) {
+            video.classList.add('motion-detected');
+            const currentTime = Date.now();
+            if (currentTime - lastCaptureTime > cooldownPeriod) {
+                statusDiv.textContent = "Motion detected! Capturing...";
+                captureAndSendImage();
+                lastCaptureTime = currentTime;
+            }
+        } else {
+            video.classList.remove('motion-detected');
+            statusDiv.textContent = "Waiting for motion..."; // Provide feedback
         }
 
 
+        previousFrame = currentFrame;
+        isProcessing = false;
+        requestAnimationFrame(processFrame);
+    }
 
        async function captureAndSendImage() {
-             diffCanvas.toBlob(async (blob) => {
+           diffCanvas.toBlob(async (blob) => {
                 if (!blob) {
                     handleError("Failed to create image blob.");
                     return;
