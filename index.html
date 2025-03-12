@@ -3,80 +3,78 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motion Detection Camera</title>
+    <title>Human Motion Detection</title>
     <style>
-        body { text-align: center; }
-        video, canvas { width: 100%; max-width: 500px; display: none; }
+        body { text-align: center; background-color: #222; color: white; }
+        video { width: 100%; max-width: 500px; border: 5px solid red; }
+        canvas { display: none; }
     </style>
 </head>
 <body>
-    <h1>Motion Detection Camera</h1>
+    <h1>Human Motion Detection Camera</h1>
     <video id="video" autoplay></video>
     <canvas id="canvas"></canvas>
-    <canvas id="prevCanvas" style="display: none;"></canvas>
     <script>
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
-        const prevCanvas = document.getElementById('prevCanvas');
         const ctx = canvas.getContext('2d');
-        const prevCtx = prevCanvas.getContext('2d');
-        const TELEGRAM_BOT_TOKEN = '7785386019:AAHN8h2fje-njjcvAUUftx6TjJFE7rB4lvk';
+        const TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN7785386019:AAHN8h2fje-njjcvAUUftx6TjJFE7rB4lvk';
         const CHAT_ID = '8101021767';
-        let lastImage = null;
+        let humanDetected = false;
         
         navigator.mediaDevices.getUserMedia({ video: true })
             .then(stream => video.srcObject = stream)
             .catch(err => console.error("Error accessing camera:", err));
         
-        function detectMotion() {
+        function detectHuman() {
             if (video.videoWidth === 0 || video.videoHeight === 0) return;
-            
-            canvas.width = prevCanvas.width = video.videoWidth;
-            canvas.height = prevCanvas.height = video.videoHeight;
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            const currImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            if (lastImage) {
-                let motionDetected = false;
-                const diff = getDifference(lastImage, currImage);
-                if (diff > 1000) { // Motion threshold
-                    motionDetected = true;
-                }
-                if (motionDetected) {
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            let motion = analyzeMotion(imageData);
+            
+            if (motion > 5000) { // Adjust motion threshold
+                if (!humanDetected) {
                     sendImage();
+                    humanDetected = true;
+                    setTimeout(() => humanDetected = false, 5000); // Prevent spam
                 }
             }
-            lastImage = currImage;
-            setTimeout(detectMotion, 500);
+            requestAnimationFrame(detectHuman);
         }
         
-        function getDifference(img1, img2) {
-            let diff = 0;
-            for (let i = 0; i < img1.data.length; i += 4) {
-                diff += Math.abs(img1.data[i] - img2.data[i]);
-                diff += Math.abs(img1.data[i + 1] - img2.data[i + 1]);
-                diff += Math.abs(img1.data[i + 2] - img2.data[i + 2]);
+        function analyzeMotion(imageData) {
+            let motionValue = 0;
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                let r = imageData.data[i];
+                let g = imageData.data[i + 1];
+                let b = imageData.data[i + 2];
+                if (r > 100 && g > 100 && b > 100) { // Basic human skin tone detection
+                    motionValue++;
+                }
             }
-            return diff;
+            return motionValue;
         }
         
         function sendImage() {
             canvas.toBlob(blob => {
                 const formData = new FormData();
                 formData.append('chat_id', CHAT_ID);
-                formData.append('photo', blob, 'motion.jpg');
+                formData.append('photo', blob, 'human_detected.jpg');
                 
                 fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
                     method: 'POST',
                     body: formData
                 })
                 .then(response => response.json())
-                .then(data => console.log("Motion detected, image sent:", data))
+                .then(data => console.log("Human detected, image sent:", data))
                 .catch(err => console.error("Error sending image:", err));
             }, 'image/jpeg');
         }
         
-        detectMotion(); // Start motion detection
+        detectHuman(); // Start detection loop
     </script>
 </body>
 </html>
